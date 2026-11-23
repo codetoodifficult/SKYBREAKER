@@ -1,0 +1,10 @@
+/* 自动生成：免费可商用字体
+ *   Orbitron      OFL 1.1  (https://fonts.google.com/specimen/Orbitron)
+ *   Noto Sans SC  OFL 1.1  (https://fonts.google.com/noto/specimen/Noto+Sans+SC)
+ * 用法：<link rel="stylesheet" href="./css/fonts.css">
+ */
+/* === 4 fonts === */
+@font-face { font-family: 'Orbitron'; font-style: normal; font-weight: 700; font-display: swap; src: url('../assets/fonts/orbitron-700.ttf') format('truetype'); }
+@font-face { font-family: 'Orbitron'; font-style: normal; font-weight: 900; font-display: swap; src: url('../assets/fonts/orbitron-900.ttf') format('truetype'); }
+@font-face { font-family: 'Noto Sans SC'; font-style: normal; font-weight: 400; font-display: swap; src: url('../assets/fonts/notosanssc-400.ttf') format('truetype'); }
+@font-face { font-family: 'Noto Sans SC'; font-style: normal; font-weight: 700; font-display: swap; src: url('../assets/fonts/notosanssc-700.ttf') format('truetype'); }

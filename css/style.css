@@ -1,0 +1,967 @@
+/* ==========================================================================
+   SKYBREAKER — 全局样式
+   分工：Canvas 只画战场（敌人/子弹/炮塔/粒子/背景）
+        HTML + CSS 负责 主菜单 / HUD 覆盖 / 暂停 / 结算 / 广告容器
+   ========================================================================== */
+
+:root {
+  --bg:            #05080f;
+  --neon:          #39d7ff;
+  --neon-dim:      rgba(57, 215, 255, .35);
+  --orange:        #ff7a3d;
+  --danger:        #ff3b5c;
+  --ok:            #4dffa6;
+  --text:          #dbe9f5;
+  --text-dim:      #7f95ab;
+  --panel:         rgba(9, 17, 30, .94);
+  --panel-border:  rgba(57, 215, 255, .28);
+
+  /* 免费可商用字体：Orbitron 英文/数字 + 思源黑体 中文 */
+  --font-num: 'Orbitron', 'Rajdhani', 'Eurostile', system-ui, sans-serif;
+  --font-cn:  'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+
+  /* 广告安全区：Banner 高度 50 + 间距，战斗 HUD 不得进入 */
+  --ad-banner-h:   50px;
+  --ad-safe-area:  68px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-cn), system-ui, sans-serif;
+
+  /* 移动端：禁止滚动 / 缩放 / 长按菜单 / 双击放大 */
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at 50% 30%, #0b1524 0%, #05080f 70%);
+}
+
+#game {
+  display: block;
+  background: #05080f;
+  touch-action: none;
+  cursor: crosshair;
+  box-shadow: 0 0 0 1px rgba(57, 215, 255, .18), 0 24px 80px rgba(0, 0, 0, .8);
+}
+
+/* ==========================================================================
+   UI 覆盖层
+
+   【UI DPI 适配】
+   UI 是 DOM 层，字号/尺寸用固定 px 排版；而战场 canvas 是 720 逻辑高等比缩放的。
+   若不处理，小屏手机横屏（视口仅 ~390 CSS px 高）上 DOM UI 会按 1:1 渲染，
+   相对被缩到 0.5 倍的战场显得大一倍并溢出屏幕。
+
+   做法：把 UI 层当作一张**与世界同尺寸的设计画布**（--ui-w × --ui-h = 世界宽 × 720），
+   内部一律用"设计画布坐标"排版，再由 JS 施加 transform: scale(--ui-scale)，
+   缩放系数与战场 canvas 完全一致 → UI 与战场等比，任何屏幕都不会溢出。
+   因此 UI 内部的 vw / vh 单位必须去掉（那会让布局再依赖一次视口，双重自适应）。
+   ========================================================================== */
+
+#ui-layer {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  width: var(--ui-w, 1280px);
+  height: var(--ui-h, 720px);
+  transform: translate(-50%, -50%) scale(var(--ui-scale, 1));
+  transform-origin: center center;
+  pointer-events: none;   /* 默认穿透，子元素按需开启 */
+  z-index: 10;
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* 内容超高时退化为顶部对齐，避免居中导致顶部被裁掉且滚不到 */
+  justify-content: safe center;
+  gap: 18px;
+  pointer-events: auto;
+  background: rgba(3, 6, 12, .82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  padding: 24px;
+  text-align: center;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.title {
+  font-family: var(--font-num);
+  font-size: 76px;
+  font-weight: 900;
+  letter-spacing: .18em;
+  color: #eaf6ff;
+  text-shadow: 0 0 18px rgba(57, 215, 255, .75), 0 0 60px rgba(57, 215, 255, .35);
+}
+.title small {
+  display: block;
+  margin-top: 10px;
+  font-family: var(--font-num);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .34em;
+  color: var(--neon);
+  text-shadow: none;
+}
+
+.sub { color: #aebfcf; font-size: 13px; letter-spacing: .1em; text-shadow: 0 1px 2px rgba(0,0,0,.9); }
+.stat-line { color: #eaf6ff; font-size: 15px; letter-spacing: .06em; font-family: var(--font-cn); text-shadow: 0 0 2px rgba(0,0,0,.95), 0 1px 3px rgba(0,0,0,.9); }
+.stat-line b { color: var(--neon); font-weight: 700; font-family: var(--font-num); text-shadow: 0 0 10px rgba(57,215,255,.6), 0 0 2px rgba(0,0,0,.9); }
+
+.result-grid {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 6px 26px;
+  font-size: 14px;
+  color: #c8d6e4;
+  margin: 4px 0 2px;
+  font-family: var(--font-cn);
+  text-shadow: 0 0 2px rgba(0,0,0,.95), 0 1px 3px rgba(0,0,0,.9);
+}
+.result-grid span:nth-child(even) { color: #eaf6ff; text-align: right; font-weight: 700; font-family: var(--font-num); text-shadow: 0 0 2px rgba(0,0,0,.95), 0 1px 3px rgba(0,0,0,.9); }
+
+/* ==========================================================================
+   触屏：扩大可点击热区（视觉尺寸不变）
+   UI 层是「设计画布 + 整体缩放」，按钮设计高度 56px 在手机横屏上
+   会被缩到 ~30 CSS px，低于手指可靠点击的 44px 下限。
+   这里用透明伪元素向外扩 6px 热区（= gap 的一半，不会和相邻按钮重叠）。
+   只在粗指针（触屏）设备生效，鼠标设备保持精确命中。
+   ========================================================================== */
+@media (hover: none) and (pointer: coarse) {
+  .ad-btn, .ui-btn { position: relative; }
+  .ad-btn::after, .ui-btn::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+  }
+}
+
+.btn-col { display: flex; flex-direction: column; gap: 12px; width: 340px; }
+
+/* ---- 自绘立体按钮（替代 Kenney img 底图：不再依赖任何图片素材）----
+   双色结构：顶部 1/3 亮色条 + 主体色，模仿原 Kenney 按钮的层次感；
+   变体只换 --btn-hi / --btn-lo 两个变量 */
+.ad-btn, .ui-btn {
+  pointer-events: auto;
+  appearance: none;
+  border: none;
+  --btn-hi: #cfd9e4;
+  --btn-lo: #aab8c8;
+  color: #10233a;          /* 浅色底 → 深色文字保证对比度 */
+  font-family: var(--font-num);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  padding: 8px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform .08s ease, filter .15s ease, box-shadow .08s ease;
+  min-height: 56px;        /* 移动端手指友好 */
+  display: flex;
+  flex-direction: column;
+  align-items: center;     /* 文字 + 副标题居中 */
+  justify-content: center;
+  text-align: center;
+  gap: 2px;
+  background: linear-gradient(180deg,
+    var(--btn-hi) 0%, var(--btn-hi) 33%,
+    var(--btn-lo) 34%, var(--btn-lo) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5), inset 0 -2px 0 rgba(0, 0, 0, .18),
+              0 3px 0 rgba(4, 10, 18, .55), 0 6px 14px rgba(0, 0, 0, .45);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .35);
+}
+.ad-btn:active, .ui-btn:active {
+  transform: scale(.97) translateY(1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .4), 0 1px 0 rgba(4, 10, 18, .55);
+  filter: brightness(1.08);
+}
+.ad-btn-primary {
+  --btn-hi: #5fe1ff;
+  --btn-lo: #2fb7e6;
+}
+.kenney-btn-ghost {
+  --btn-hi: #cfd9e4;
+  --btn-lo: #a5b4c5;
+}
+.kenney-btn-ad {
+  --btn-hi: #ffe08a;
+  --btn-lo: #ffc23d;
+}
+/* 主菜单"难度"入口（此前 .kenney-btn-yellow 未定义 → 按钮完全不可见） */
+.kenney-btn-yellow {
+  --btn-hi: #ffe08a;
+  --btn-lo: #ffc23d;
+}
+.kenney-btn-red {
+  --btn-hi: #ff8f9f;
+  --btn-lo: #f0556e;
+}
+.kenney-btn-green {
+  --btn-hi: #7dedb2;
+  --btn-lo: #3fcf87;
+}
+.ad-btn[disabled] { opacity: .6; filter: grayscale(.4); cursor: not-allowed; }
+
+.ad-btn .ad-ico { margin-right: 8px; }
+.btn-note {
+  display: block;
+  margin-top: 1px;
+  font-family: var(--font-cn);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: #22354e;
+  text-transform: none;
+  text-shadow: none;
+}
+
+/* 通用 Kenney 标题条（菜单顶部/底部） */
+.console-bar {
+  width: 640px;
+  height: 64px;
+  background-image: url('../img/UI/Extra/Double/panel_rectangle.png');
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #eaf6ff;
+  font-family: var(--font-num);
+  font-weight: 900;
+  letter-spacing: .32em;
+  text-transform: uppercase;
+  font-size: 18px;
+  position: relative;
+  flex-shrink: 0;
+}
+.console-bar::before, .console-bar::after {
+  content: '';
+  position: absolute;
+  top: 50%; transform: translateY(-50%);
+  width: 12px; height: 12px;
+  background: var(--neon);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--neon);
+  opacity: .9;
+}
+.console-bar::before { left: 18px; }
+.console-bar::after  { right: 18px; }
+
+/* ==========================================================================
+   菜单 / 结算 / 暂停 的"控制台窗口"面板框（Kenney panel_square）
+   ========================================================================== */
+.screen-frame {
+  width: 500px;
+  padding: 0 24px 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  /* Kenney 面板全是浅色（默认给深色字用），但我们的 UI 文字是浅色。
+     用纯深色背景 + 霓虹边框来定义"控制台窗口"外形 */
+  background: #0a1322;
+  border: 1px solid rgba(57, 215, 255, .28);
+  box-shadow: 0 0 40px rgba(57, 215, 255, .12), 0 24px 60px rgba(0, 0, 0, .6);
+  border-radius: 4px;
+}
+/* ==========================================================================
+   长内容面板（军械库 / 出击构型）：头部固定 + 中间滚动 + 底栏固定
+   内容可达 1000~2900px，不拆三段会顶出屏幕且够不到底部按钮
+   ========================================================================== */
+.panel-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.panel-head,
+.panel-body,
+.panel-foot {
+  width: 100%;
+  box-sizing: border-box;
+}
+.panel-head {
+  flex: 0 0 auto;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(57, 215, 255, .18);
+}
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;              /* flex 子项可滚动的关键 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 6px 4px 0;
+  text-align: left;
+}
+.panel-foot {
+  flex: 0 0 auto;
+  padding-top: 12px;
+  margin-top: 6px;
+  border-top: 1px solid rgba(57, 215, 255, .18);
+}
+.panel-body::-webkit-scrollbar { width: 8px; }
+.panel-body::-webkit-scrollbar-track { background: rgba(255, 255, 255, .04); border-radius: 4px; }
+.panel-body::-webkit-scrollbar-thumb { background: rgba(57, 215, 255, .35); border-radius: 4px; }
+.panel-body::-webkit-scrollbar-thumb:hover { background: rgba(57, 215, 255, .55); }
+
+.frame-header {
+  width: 100%;
+  height: 58px;
+  margin: -6px 0 2px;
+  background-image: url('../img/UI/Extra/Double/panel_rectangle.png');
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-num);
+  font-weight: 900;
+  letter-spacing: .26em;
+  color: #eaf6ff;
+  text-transform: uppercase;
+  font-size: 14px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .9), 0 0 12px rgba(57, 215, 255, .5);
+}
+.frame-header.danger { color: #ffb3c0; }
+.frame-header.ok     { color: #b6ffd9; }
+
+/* ==========================================================================
+   升级三选一卡片
+   ========================================================================== */
+.upgrade-card {
+  width: 200px;
+  height: 320px;
+  position: relative;
+  cursor: pointer;
+  filter: drop-shadow(0 6px 20px rgba(0, 0, 0, .5));
+  transition: transform .15s ease, filter .15s ease;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.upgrade-card:hover, .upgrade-card:active {
+  transform: translateY(-6px) scale(1.03);
+  filter: drop-shadow(0 12px 32px rgba(57, 215, 255, .55)) brightness(1.08);
+}
+.uc-header {
+  position: absolute; top: 0; left: 0;
+  width: 100%; height: 84px;
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding-bottom: 10px;
+  color: #eaf6ff;
+  text-align: center;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .85);
+  filter: brightness(.6) saturate(1.25);   /* 压暗按钮底，浅色文字才可读 */
+}
+.uc-cat {
+  font-family: var(--font-num);
+  font-size: 10px;
+  letter-spacing: .3em;
+  text-transform: uppercase;
+  opacity: .85;
+  margin-bottom: 4px;
+}
+.uc-name {
+  font-family: var(--font-cn);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: .08em;
+}
+.uc-body {
+  position: absolute; top: 84px; left: 0;
+  width: 100%; height: 236px;
+  background: #0a1322;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  padding: 16px 18px 12px;
+  box-sizing: border-box;
+  color: #dbe9f5;
+}
+.uc-icon {
+  font-size: 44px;
+  line-height: 1;
+  margin-bottom: 14px;
+  color: var(--neon);
+  text-shadow: 0 0 12px rgba(57, 215, 255, .55);
+}
+.uc-desc {
+  font-family: var(--font-cn);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+  color: #e6eef6;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .8);
+}
+.uc-stack {
+  font-family: var(--font-num);
+  font-size: 11px;
+  letter-spacing: .14em;
+  color: var(--orange);
+  text-transform: uppercase;
+  min-height: 16px;
+}
+
+/* ==========================================================================
+   基地升级（Phase 9 永久成长）
+   ========================================================================== */
+.meta-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 4px;
+  border-bottom: 1px solid rgba(57, 215, 255, .12);
+}
+.meta-icon {
+  font-size: 26px;
+  line-height: 1;
+  width: 40px;
+  flex-shrink: 0;
+  text-align: center;
+  color: var(--neon);
+  text-shadow: 0 0 10px rgba(57, 215, 255, .55);
+}
+.meta-info { flex: 1; min-width: 0; }
+.meta-name {
+  font-family: var(--font-cn);
+  font-weight: 700;
+  font-size: 15px;
+  color: #eaf6ff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, .95), 0 1px 3px rgba(0, 0, 0, .9);
+}
+.meta-lv {
+  font-family: var(--font-num);
+  font-size: 11px;
+  color: var(--neon);
+  margin-left: 8px;
+  letter-spacing: .06em;
+  text-shadow: 0 0 8px rgba(57, 215, 255, .6), 0 0 2px rgba(0, 0, 0, .9);
+}
+.meta-desc {
+  font-family: var(--font-cn);
+  font-size: 12px;
+  color: #c8d6e4;
+  text-shadow: 0 0 2px rgba(0, 0, 0, .95), 0 1px 2px rgba(0, 0, 0, .9);
+  margin-top: 2px;
+}
+.meta-buy {
+  flex-shrink: 0;
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  min-width: 108px;
+  height: 46px;
+  padding: 0 12px 6px;
+  font-family: var(--font-num);
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: .04em;
+  color: #06121f;
+  background-image: url('../img/UI/Blue/Double/button_square_header_large_rectangle.png');
+  background-size: 100% 100%;
+  background-repeat: no-repeat;
+  background-position: center;
+  transition: transform .08s ease, filter .15s ease;
+}
+.meta-buy:active { transform: scale(.95); filter: brightness(1.2); }
+.meta-buy[disabled] { opacity: .55; filter: grayscale(.5); cursor: not-allowed; }
+.meta-buy.maxed {
+  background-image: url('../img/UI/Grey/Double/button_square_header_large_rectangle.png');
+  color: #141b26;
+}
+
+/* Toast */
+#ui-toast {
+  position: absolute;
+  left: 50%;
+  top: 14%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+.toast {
+  padding: 9px 18px;
+  border-radius: 20px;
+  background: rgba(9, 17, 30, .9);
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  font-family: var(--font-cn);
+  font-size: 13px;
+  letter-spacing: .06em;
+  animation: toastIn .22s ease;
+}
+.toast.warn { border-color: rgba(255, 122, 61, .6); color: #ffcfae; }
+.toast.good { border-color: rgba(77, 255, 166, .5); color: #b6ffd9; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+
+/* ==========================================================================
+   广告位 ①：Banner
+   ========================================================================== */
+
+.ad-banner-slot {
+  position: fixed;
+  left: 50%;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  /* 跟随 UI 缩放（--ui-scale 与战场一致），小屏不再占大块面积压住菜单 */
+  transform: translateX(-50%) scale(var(--ui-scale, 1));
+  transform-origin: bottom center;
+  width: 720px;
+  height: var(--ad-banner-h);
+  z-index: 20;
+  pointer-events: auto;
+}
+.ad-banner-slot[hidden] { display: none; }
+.ad-banner-box {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border: 1px dashed rgba(255, 122, 61, .45);
+  border-radius: 8px;
+  background: rgba(255, 122, 61, .07);
+}
+.ad-badge {
+  font-size: 10px;
+  letter-spacing: .14em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 122, 61, .85);
+  color: #1a0d05;
+  font-weight: 800;
+}
+.ad-banner-text { font-size: 12px; color: #ffbe97; letter-spacing: .08em; }
+
+/* ==========================================================================
+   广告位 ②：全屏（激励视频 / 插屏）
+   ========================================================================== */
+
+.ad-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 4, 8, .96);
+}
+.ad-fullscreen[hidden] { display: none; }
+.ad-mock {
+  width: 520px;
+  border: 1px solid rgba(255, 122, 61, .35);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #101a2b, #070c15);
+  overflow: hidden;
+  /* 跟随 UI 缩放，小屏上模拟广告弹窗不再撑满屏幕 */
+  transform: scale(var(--ui-scale, 1));
+}
+.ad-mock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  font-size: 12px;
+  letter-spacing: .16em;
+  color: var(--orange);
+  border-bottom: 1px solid rgba(255, 255, 255, .07);
+}
+.ad-mock-close {
+  appearance: none;
+  border: none;
+  background: rgba(255, 255, 255, .1);
+  color: var(--text);
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ad-mock-body { padding: 34px 20px; text-align: center; }
+.ad-mock-title { font-size: 15px; color: var(--text-dim); letter-spacing: .1em; }
+.ad-mock-count { font-size: 52px; font-weight: 800; color: var(--orange); margin: 10px 0 18px; }
+.ad-mock-count small { font-size: 18px; margin-left: 3px; }
+.ad-mock-foot {
+  padding: 9px 14px;
+  font-size: 11px;
+  color: #55677c;
+  border-top: 1px solid rgba(255, 255, 255, .06);
+  letter-spacing: .05em;
+}
+
+/* ==========================================================================
+   调试面板
+   ========================================================================== */
+
+#debug-panel {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 60;
+  min-width: 208px;
+  padding: 10px 12px;
+  border: 1px solid rgba(77, 255, 166, .3);
+  border-radius: 8px;
+  background: rgba(4, 10, 16, .93);
+  color: #b6ffd9;
+  /* 跟随 UI 缩放（--ui-scale 与战场一致） */
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: top left;
+  font-size: 11px;
+  line-height: 1.65;
+  pointer-events: auto;
+}
+#debug-panel[hidden] { display: none; }
+#debug-panel h4 { font-size: 11px; letter-spacing: .18em; color: var(--ok); margin-bottom: 6px; }
+#debug-panel .dbg-row { display: flex; justify-content: space-between; gap: 12px; }
+#debug-panel .dbg-row span:last-child { color: #eafff5; }
+#debug-panel .dbg-btns { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+#debug-panel button {
+  appearance: none;
+  border: 1px solid rgba(77, 255, 166, .35);
+  background: rgba(77, 255, 166, .1);
+  color: #b6ffd9;
+  font-family: inherit;
+  font-size: 10px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+#debug-panel button:active { transform: scale(.95); }
+
+/* ==========================================================================
+   难度选择页（Phase 17–20 · 纯 CSS 自绘，不使用 img/UI 素材）
+   布局：全屏两栏 —— 左列难度列表（可滚动）+ 右列详情/挑战/操作
+   ========================================================================== */
+.diff-screen {
+  position: absolute;
+  inset: 0;
+  padding: 14px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: auto;
+  background:
+    radial-gradient(ellipse at 18% 0%, rgba(57, 215, 255, .10) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 100%, rgba(255, 122, 61, .07) 0%, transparent 55%),
+    rgba(4, 8, 15, .88);
+}
+.diff-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 8px;
+}
+.diff-head .dh-title {
+  font-family: var(--font-num);
+  font-weight: 900;
+  font-size: 20px;
+  letter-spacing: .22em;
+  color: #eaf6ff;
+  text-shadow: 0 0 14px rgba(57, 215, 255, .55);
+}
+.diff-head .dh-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: .06em;
+}
+
+.diff-body {
+  flex: 1;
+  min-height: 0;                 /* 让子项能正确收缩 + 内部滚动 */
+  display: flex;
+  gap: 12px;
+}
+
+/* ---- 左列：难度列表 ---- */
+.diff-list {
+  flex: 1.3;
+  min-width: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 8px;
+  padding-right: 4px;
+}
+.diff-list::-webkit-scrollbar { width: 6px; }
+.diff-list::-webkit-scrollbar-thumb { background: rgba(57, 215, 255, .25); border-radius: 3px; }
+
+.diff-card {
+  appearance: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+  border-radius: 8px;
+  border: 1px solid rgba(57, 215, 255, .20);
+  background: linear-gradient(160deg, rgba(15, 28, 48, .95) 0%, rgba(8, 16, 28, .96) 100%);
+  padding: 8px 10px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease;
+}
+.diff-card::before {              /* 左侧色条：按难度档位着色 */
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--tier, var(--neon));
+  box-shadow: 0 0 8px var(--tier, var(--neon));
+}
+.diff-card:hover { transform: translateY(-1px); border-color: rgba(57, 215, 255, .45); }
+.diff-card:active { transform: scale(.985); }
+.diff-card.sel {
+  border-color: var(--neon);
+  box-shadow: 0 0 0 1px var(--neon), 0 0 20px rgba(57, 215, 255, .28);
+  background: linear-gradient(160deg, rgba(20, 44, 68, .96) 0%, rgba(10, 22, 38, .97) 100%);
+}
+.diff-card.locked { opacity: .55; filter: grayscale(.5); cursor: not-allowed; }
+
+.diff-card .dc-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.diff-card .dc-badge {            /* D0–D10 徽章 */
+  font-family: var(--font-num);
+  font-weight: 900;
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: #05121f;
+  background: var(--tier, var(--neon));
+  border-radius: 4px;
+  padding: 1px 5px;
+  text-shadow: none;
+}
+.diff-card .dc-name {
+  font-family: var(--font-num);
+  font-weight: 800;
+  font-size: 12.5px;
+  letter-spacing: .1em;
+  color: #eaf6ff;
+}
+.diff-card .dc-check {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ok);
+}
+.diff-card .dc-sub {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  letter-spacing: .03em;
+}
+.diff-card .dc-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: var(--font-num);
+  font-size: 9.5px;
+  letter-spacing: .05em;
+  color: #9fd8ee;
+}
+.diff-card .dc-stats b { color: #ffd166; font-weight: 700; }
+.diff-card .dc-lock {
+  font-size: 10px;
+  color: #ff9b6b;
+  line-height: 1.35;
+}
+.diff-card .dc-ad {               /* 行内"广告提前解锁"小按钮 */
+  margin-top: 4px;
+  align-self: flex-start;
+  appearance: none;
+  cursor: pointer;
+  font-family: var(--font-cn);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #3a2a00;
+  background: linear-gradient(180deg, #ffd166 0%, #ffb347 100%);
+  border: none;
+  border-radius: 5px;
+  padding: 3px 9px;
+  box-shadow: 0 2px 8px rgba(255, 179, 71, .35);
+}
+.diff-card .dc-ad:active { transform: scale(.96); }
+
+/* ---- 右列：详情 / 挑战 / 操作 ---- */
+.diff-side {
+  width: 340px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.diff-side::-webkit-scrollbar { width: 6px; }
+.diff-side::-webkit-scrollbar-thumb { background: rgba(57, 215, 255, .25); border-radius: 3px; }
+
+.diff-panel {
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(10, 20, 35, .82);
+  padding: 10px 12px;
+}
+.diff-panel.warn-panel { border-color: rgba(255, 155, 107, .35); background: rgba(40, 22, 12, .55); }
+.diff-panel .dp-title {
+  font-family: var(--font-num);
+  font-size: 12.5px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  color: #eaf6ff;
+}
+.diff-panel .dp-title.gold { color: #ffd166; }
+.diff-panel .dp-lines {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.65;
+  color: #c4d9ea;
+}
+.diff-panel .dp-lines b { color: #ffd166; font-weight: 700; }
+.diff-panel .dp-rules {
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: #ff9b6b;
+  line-height: 1.5;
+}
+.diff-panel .dp-note {
+  margin-top: 3px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+.diff-chal-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+.diff-chal {
+  appearance: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 155, 107, .28);
+  background: rgba(255, 155, 107, .06);
+  padding: 6px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  transition: border-color .12s ease, background .12s ease;
+}
+.diff-chal:hover { border-color: rgba(255, 155, 107, .6); }
+.diff-chal:active { transform: scale(.98); }
+.diff-chal.on {
+  border-color: var(--orange);
+  background: rgba(255, 122, 61, .16);
+  box-shadow: 0 0 12px rgba(255, 122, 61, .18);
+}
+.diff-chal .dc-name2 {
+  font-family: var(--font-num);
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  color: #ffd8c2;
+}
+.diff-chal.on .dc-name2 { color: #fff; }
+.diff-chal .dc-desc { font-size: 10.5px; color: var(--text-dim); }
+.diff-chal .dc-reward { font-size: 10.5px; color: var(--ok); }
+
+.diff-actions {
+  margin-top: auto;               /* 沉底 */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.diff-btn {
+  appearance: none;
+  font-family: var(--font-cn);
+  cursor: pointer;
+  border-radius: 8px;
+  border: 1px solid rgba(57, 215, 255, .45);
+  background: linear-gradient(180deg, rgba(57, 215, 255, .22) 0%, rgba(57, 215, 255, .10) 100%);
+  color: #eaf6ff;
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  padding: 11px 14px;
+  text-shadow: 0 0 10px rgba(57, 215, 255, .5);
+  transition: filter .12s ease, transform .12s ease;
+}
+.diff-btn small {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  color: #9fd8ee;
+  margin-top: 2px;
+  text-shadow: none;
+}
+.diff-btn:hover { filter: brightness(1.25); }
+.diff-btn:active { transform: scale(.98); }
+.diff-btn.ghost {
+  border-color: rgba(127, 149, 171, .35);
+  background: rgba(16, 26, 42, .8);
+  color: var(--text-dim);
+  text-shadow: none;
+}
+.diff-btn.go {
+  border-color: rgba(77, 255, 166, .5);
+  background: linear-gradient(180deg, rgba(77, 255, 166, .20) 0%, rgba(77, 255, 166, .08) 100%);
+  color: #c9ffe6;
+  text-shadow: 0 0 10px rgba(77, 255, 166, .5);
+}
+
+/* 难度页不再做小屏降级 —— 手机上同样用电脑端的两栏布局。
+   原先 max-width:900px 时会把右栏（详情 / 挑战加码 / 出击按钮）整块挤到列表下方，
+   手机横屏可视高度本来就不够，玩家看不到数值与挑战信息，等于丢了半屏内容。
+   现在左右两栏恒定并排、各自独立滚动，信息与 PC 完全一致。
+
+   ⚠️ 不要再按视口宽度改布局：整个 UI 层是「固定设计画布 + 整体等比缩放」，
+   视口 844px 时画布仍是 1280+，按视口写 media query 会算出与画布不符的布局
+   （实测会把难度卡片挤成 6~7 列）。这里保持 PC 版式，靠整体缩放适配小屏。 */
